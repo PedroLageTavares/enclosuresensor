@@ -1,0 +1,134 @@
+esphome:
+  name: uv-air-monitor
+  friendly_name: UV Air Monitor
+  comment: UV printer workspace monitor with activity and air quality tracking
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  ap:
+    ssid: UV Air Monitor Fallback
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+substitutions:
+  # XIAO ESP32-C3 typical I2C pins. Keep aligned with project wiring.
+  i2c_sda_pin: GPIO6
+  i2c_scl_pin: GPIO7
+  # Conservative activity detection defaults. Tune experimentally.
+  vibration_active_threshold: "1.08"
+  vibration_delayed_on: 12s
+  vibration_delayed_off: 45s
+  vibration_window_size: "12"
+
+i2c:
+  sda: ${i2c_sda_pin}
+  scl: ${i2c_scl_pin}
+  scan: true
+  id: i2c_bus
+
+sensor:
+  - platform: aht10
+    variant: AHT20
+    temperature:
+      name: UV Monitor Temperature
+      id: uv_temperature
+      unit_of_measurement: C
+    humidity:
+      name: UV Monitor Humidity
+      id: uv_humidity
+    update_interval: 15s
+
+  - platform: bmp280_i2c
+    pressure:
+      name: UV Monitor Pressure
+      id: uv_pressure
+    temperature:
+      name: UV Monitor BMP280 Temperature
+      id: uv_temperature_bmp280
+      internal: true
+    update_interval: 15s
+
+  - platform: sgp4x
+    voc:
+      name: UV Monitor VOC Index
+      id: uv_voc_index
+    nox:
+      name: UV Monitor NOx Index
+      id: uv_nox_index
+    compensation:
+      humidity_source: uv_humidity
+      temperature_source: uv_temperature
+    update_interval: 15s
+
+  - platform: lis3dh
+    i2c_id: i2c_bus
+    address: 0x18
+    update_interval: 500ms
+    x:
+      name: UV Monitor Acceleration X
+      id: accel_x
+    y:
+      name: UV Monitor Acceleration Y
+      id: accel_y
+    z:
+      name: UV Monitor Acceleration Z
+      id: accel_z
+
+  - platform: template
+    name: UV Monitor Vibration Level
+    id: vibration_level
+    unit_of_measurement: g
+    accuracy_decimals: 3
+    lambda: |-
+      const float x = id(accel_x).state;
+      const float y = id(accel_y).state;
+      const float z = id(accel_z).state;
+      return sqrtf(x * x + y * y + z * z);
+    update_interval: 1s
+    filters:
+      - sliding_window_moving_average:
+          window_size: ${vibration_window_size}
+          send_every: 1
+
+binary_sensor:
+  - platform: template
+    name: UV Monitor Printer Active
+    id: printer_active
+    device_class: running
+    lambda: |-
+      // Conservative initial threshold. Tune experimentally in your workspace.
+      return id(vibration_level).state > ${vibration_active_threshold};
+    filters:
+      - delayed_on: ${vibration_delayed_on}
+      - delayed_off: ${vibration_delayed_off}
+
+font:
+  - file: "gfonts://Roboto Mono"
+    id: oled_font_small
+    size: 12
+
+display:
+  - platform: ssd1306_i2c
+    model: SSD1306 128x64
+    address: 0x3C
+    update_interval: 2s
+    lambda: |-
+      it.printf(0, 0, id(oled_font_small), "Printer: %s", id(printer_active).state ? "ACTIVE" : "IDLE");
+      it.printf(0, 16, id(oled_font_small), "VOC: %.1f", id(uv_voc_index).state);
+      it.printf(0, 32, id(oled_font_small), "T: %.1f C", id(uv_temperature).state);
+      it.printf(0, 48, id(oled_font_small), "H: %.1f %%", id(uv_humidity).state);

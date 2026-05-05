@@ -1,0 +1,5 @@
+# Local ESPHome secrets
+secrets.yaml
+
+# ESPHome build output
+.esphome/
