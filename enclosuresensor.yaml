@@ -1,0 +1,116 @@
+substitutions:
+  device_name: enclosuresensor
+  friendly_name: Enclosure Sensor
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Fallback hotspot (captive portal) in case Wi-Fi connection fails
+  ap:
+    ssid: "${friendly_name} AP"
+    password: !secret ap_password
+
+captive_portal:
+
+# I2C bus — SDA: GPIO8, SCL: GPIO9 (default for ESP32-C3-DevKitM-1)
+i2c:
+  sda: GPIO8
+  scl: GPIO9
+  scan: true
+  id: bus_a
+
+sensor:
+  # ── Temperature & Humidity ──────────────────────────────────────────────────
+  # SHT31-D (I2C address 0x44)
+  - platform: sht3xd
+    temperature:
+      name: "Temperature"
+      id: sht31_temperature
+      unit_of_measurement: "°C"
+      accuracy_decimals: 1
+    humidity:
+      name: "Humidity"
+      id: sht31_humidity
+      unit_of_measurement: "%"
+      accuracy_decimals: 1
+    address: 0x44
+    update_interval: 30s
+
+  # ── VOC Index ───────────────────────────────────────────────────────────────
+  # SGP40 (I2C address 0x59)
+  # Temperature and humidity from SHT31 are fed in for compensation.
+  - platform: sgp4x
+    voc:
+      name: "VOC Index"
+      id: voc_index
+    compensation:
+      temperature_source: sht31_temperature
+      humidity_source: sht31_humidity
+    update_interval: 30s
+
+  # ── Vibration (acceleration) ────────────────────────────────────────────────
+  # ADXL345 (I2C address 0x53)
+  - platform: adxl345
+    address: 0x53
+    accel_x:
+      name: "Acceleration X"
+      id: accel_x
+      accuracy_decimals: 2
+    accel_y:
+      name: "Acceleration Y"
+      id: accel_y
+      accuracy_decimals: 2
+    accel_z:
+      name: "Acceleration Z"
+      id: accel_z
+      accuracy_decimals: 2
+    update_interval: 100ms  # High rate needed for vibration detection
+
+  # Combined vibration magnitude (√(x² + y² + z²))
+  - platform: template
+    name: "Vibration Magnitude"
+    id: vibration_magnitude
+    unit_of_measurement: "g"
+    accuracy_decimals: 3
+    update_interval: 100ms
+    lambda: |-
+      if (id(accel_x).has_state() && id(accel_y).has_state() && id(accel_z).has_state()) {
+        float x = id(accel_x).state;
+        float y = id(accel_y).state;
+        float z = id(accel_z).state;
+        return sqrt(x*x + y*y + z*z);
+      }
+      return NAN;
+
+binary_sensor:
+  # Vibration alert — triggered when acceleration magnitude exceeds 1.2 g
+  - platform: template
+    name: "Vibration Detected"
+    device_class: vibration
+    lambda: |-
+      if (id(vibration_magnitude).has_state()) {
+        return id(vibration_magnitude).state > 1.2f;
+      }
+      return false;

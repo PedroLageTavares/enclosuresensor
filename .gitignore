@@ -1,0 +1,6 @@
+# ESPHome build artifacts
+.esphome/
+
+# Editor / OS
+.DS_Store
+*.swp
