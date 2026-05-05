@@ -30,6 +30,12 @@ substitutions:
   i2c_sda_pin: GPIO6
   i2c_scl_pin: GPIO7
   # Conservative activity detection defaults. Tune experimentally.
+  # First pass tuning workflow:
+  # 1) Observe vibration_level while the printer is idle for several minutes.
+  # 2) Observe vibration_level again during a representative print job.
+  # 3) Set vibration_active_threshold slightly above idle but below sustained print values.
+  # 4) Increase delayed_on if short bumps create false starts.
+  # 5) Increase delayed_off if brief pauses during printing create false idle transitions.
   vibration_active_threshold: "1.08"
   vibration_delayed_on: 12s
   vibration_delayed_off: 45s
@@ -95,6 +101,8 @@ sensor:
     unit_of_measurement: g
     accuracy_decimals: 3
     lambda: |-
+      // Baseline option: raw acceleration magnitude.
+      // This is simple and readable, but it includes the constant 1 g gravity component.
       const float x = id(accel_x).state;
       const float y = id(accel_y).state;
       const float z = id(accel_z).state;
@@ -105,13 +113,24 @@ sensor:
           window_size: ${vibration_window_size}
           send_every: 1
 
+  # Future improvement option:
+  # Replace the lambda above with the block below if raw magnitude proves too sensitive
+  # to mounting angle or not sensitive enough to real vibration.
+  # Delta-from-1g focuses on motion energy by removing most of the gravity baseline.
+  # lambda: |-
+  #   const float x = id(accel_x).state;
+  #   const float y = id(accel_y).state;
+  #   const float z = id(accel_z).state;
+  #   const float magnitude = sqrtf(x * x + y * y + z * z);
+  #   return fabsf(magnitude - 1.0f);
+
 binary_sensor:
   - platform: template
     name: UV Monitor Printer Active
     id: printer_active
     device_class: running
     lambda: |-
-      // Conservative initial threshold. Tune experimentally in your workspace.
+      // Conservative initial threshold. Tune from live data in Home Assistant or ESPHome logs.
       return id(vibration_level).state > ${vibration_active_threshold};
     filters:
       - delayed_on: ${vibration_delayed_on}
